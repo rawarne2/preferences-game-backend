@@ -1,23 +1,12 @@
 import express from 'express';
 import { Server, Socket } from 'socket.io';
 import cors, { type CorsOptions } from 'cors';
-import { createServer, type ServerOptions } from 'https';
-// import fs from 'fs';
 import "dotenv/config";
-// TODO: make new certs when deploying backend
+import { createServer } from 'http';
 
 
 const origin = process.env.ORIGIN;
 console.log('origin: ', origin, process.env.PORT)
-const options: ServerOptions = {
-    // key: fs.readFileSync('key.pem'),
-    // cert: fs.readFileSync('cert.pem'),
-}
-
-// const options = {
-//     key: fs.readFileSync(path.join(__dirname, "../certs/key.pem")),
-//     cert: fs.readFileSync(path.join(__dirname, "../certs/cert.pem")),
-// };
 
 // Types
 interface Player {
@@ -45,7 +34,7 @@ const corsSettings: CorsOptions = {
 }
 app.use(cors(corsSettings));
 
-const httpServer = createServer(options, app);
+const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
     transports: ['websocket'],
