@@ -238,11 +238,11 @@ httpServer.on('tlsClientError', (err, socket) => {
 })
 
 httpServer.on('connect', (socket) => {
-    console.log('Client connected', socket);
+    console.log('Client connected', socket.headers);
 })
 
 httpServer.on('connection', (socket) => {
-    console.log('Client connection', socket);
+    console.log('Client connection');
 })
 
 httpServer.on('request', (req, res) => {
