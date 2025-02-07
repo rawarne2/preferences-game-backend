@@ -37,7 +37,6 @@ app.use(cors(corsSettings));
 const httpServer = createServer(app);
 
 const io = new Server(httpServer, {
-    transports: ['websocket'],
     cors: {
         origin: origin,
         methods: ["GET", "POST"],
