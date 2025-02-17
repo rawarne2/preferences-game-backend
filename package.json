@@ -7,12 +7,14 @@
     "start": "node dist/index.js",
     "dev": "nodemon --exec tsx src/index.ts",
     "build": "tsc",
+    "docker:build": "docker build -t preferences-game-backend .",
+    "docker:dev": "docker-compose up dev",
+    "docker:prod": "docker-compose up app",
     "test": "echo \"No tests specified\" && exit 0"
   },
   "keywords": [],
   "author": "Rashaun Warner",
   "license": "ISC",
-  "type": "module",
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

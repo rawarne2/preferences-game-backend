@@ -1,6 +1,6 @@
 .DS_Store
 *.pem
-.env
+.env*
 ## Node Defaults
 # Logs
 logs

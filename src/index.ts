@@ -1,9 +1,15 @@
-import express from 'express';
-import { Server, Socket } from 'socket.io';
-import cors, { type CorsOptions } from 'cors';
-import "dotenv/config";
-import { createServer } from 'http';
+import type { Socket, Server as SocketIOServerType } from "socket.io";
+import type { CorsOptions } from "cors";
+import type { Server as HttpServerType } from "http";
+const dotenv = require('dotenv');
+const http = require('http');
+const express = require('express');
+const { Server } = require('socket.io');
+const cors = require('cors');
 
+dotenv.config({ path: `.env.${process.env.NODE_ENV}` });
+
+const app = express();
 
 const origin = process.env.ORIGIN;
 console.log('origin: ', origin, process.env.PORT)
@@ -23,8 +29,6 @@ interface GameRoom {
 // State management | TODO: use redis or database
 const gameRooms = new Map<string, GameRoom>();
 
-// Express setup
-const app = express();
 
 const corsSettings: CorsOptions = {
     origin: origin,
@@ -34,15 +38,19 @@ const corsSettings: CorsOptions = {
 }
 app.use(cors(corsSettings));
 
-const httpServer = createServer(app);
+// Health check endpoint for ALB
+app.get('/health', (_: any, res: any) => {
+    res.status(200).send('OK');
+});
 
-const io = new Server(httpServer, {
+const httpServer: HttpServerType = http.createServer(app);
+
+const io: SocketIOServerType = new Server(httpServer, {
     transports: ['websocket'],
-    cors: {
-        origin: origin,
-        methods: ["GET", "POST"],
-        credentials: true,
-    }
+    cors: corsSettings,
+    // Allow connection upgrades behind ALB
+    allowEIO3: true,
+    path: '/socket.io/'
 });
 
 
@@ -64,7 +72,7 @@ const createUniqueRoomCode = (): string => {
     return code;
 };
 
-io.use((socket, next) => {
+io.use((socket: Socket, next) => {
     console.log('New socket connection:', socket.id);
     next();
 });
@@ -72,7 +80,6 @@ io.use((socket, next) => {
 // Socket.IO event handlers
 io.on('connection', (socket: Socket) => {
     io.emit('connected!!!!!!', socket.id); // not needed
-    console.log(`connected with transport ${socket.nsp.name} and id ${socket.id}`);
     // Create a new room
     socket.on('createRoom', () => {
         const roomCode = createUniqueRoomCode();
@@ -223,6 +230,7 @@ io.on('connect_error', (err) => {
 // Start server
 const PORT: number = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 // const PORT = 3001;
+
 httpServer.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
 })
@@ -246,9 +254,11 @@ httpServer.on('connection', (socket) => {
 })
 
 httpServer.on('request', (req, res) => {
-    console.log('Client request', req, res);
+    console.log('Client request', req.url, res.statusCode);
 })
 
 httpServer.on('error', (err) => {
     console.error('Server error:', err);
 })
+
+module.exports = httpServer
