@@ -40,17 +40,19 @@ app.use(cors(corsSettings));
 
 // Health check endpoint for ALB
 app.get('/health', (_: any, res: any) => {
-    res.status(200).send('OK');
+    res.status(200).send('OK!!!');
 });
 
 const httpServer: HttpServerType = http.createServer(app);
 
 const io: SocketIOServerType = new Server(httpServer, {
-    transports: ['websocket'],
+    transports: ['websocket', 'polling'],
     cors: corsSettings,
     // Allow connection upgrades behind ALB
     allowEIO3: true,
-    path: '/socket.io/'
+    rememberUpgrade: true,  // Client will remember successful websocket connections
+    upgradeTimeout: 10000,  // Time to wait for upgrade to websocket
+    agent: false,
 });
 
 
@@ -79,7 +81,6 @@ io.use((socket: Socket, next) => {
 
 // Socket.IO event handlers
 io.on('connection', (socket: Socket) => {
-    io.emit('connected!!!!!!', socket.id); // not needed
     // Create a new room
     socket.on('createRoom', () => {
         const roomCode = createUniqueRoomCode();
@@ -224,24 +225,24 @@ io.on('connection', (socket: Socket) => {
 });
 
 io.on('connect_error', (err) => {
-    console.error('Socket.IO error:', err);
+    console.error('Socket.IO error: ', err);
+    io.emit('Socket.IO connect_error: ', err);
 })
 
 // Start server
-const PORT: number = process.env.PORT ? parseInt(process.env.PORT) : 3001;
-// const PORT = 3001;
+const PORT: number = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 httpServer.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
 })
 
 httpServer.on('clientError', (err, socket) => {
-    // socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
     console.error('Client error:', err);
 })
 
 httpServer.on('tlsClientError', (err, socket) => {
-    // socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
     console.error('TLS client error:', err.message, err.cause);
 })
 
