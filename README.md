@@ -1,8 +1,15 @@
 # preferences-game-backend
 
-Backed service for Preferences game that uses TypeScript, Express, and  Socket.io.
+Backend service for Preferences game that uses TypeScript, Express, and Socket.io.
 
-Do not use this code for any reason other than evaluating this task on DataAnnotation.
+Users are disconnected after 2 minutes of inactivity.
+
+## Tech Stack
+
+- TypeScript
+- Express
+- Socket.io
+- Docker
 
 ## Running the server
 
@@ -12,11 +19,9 @@ npm run dev
 
 --------------------------------
 
-Here’s a **sample backend contract** for your socket.io server. This contract defines the **event names**, **payloads**, and **expected responses** for both client and server.
-
----
-
 # **Socket.IO Backend Contract**
+
+This contract defines the **event names**, **payloads**, and **expected responses** for both client and server based on the actual implementation.
 
 ---
 
@@ -28,13 +33,12 @@ Here’s a **sample backend contract** for your socket.io server. This contract 
 
   ```json
   {
-    "userId": "string",        // persistent user ID
-    "name": "string"
+    "userId": "string"  // optional persistent user ID
   }
   ```
 
 - **Server Response:**  
-  Emits `room-created` to the creator (and possibly to all in the room).
+  Emits `room-created` to the creator.
 
 ---
 
@@ -44,62 +48,60 @@ Here’s a **sample backend contract** for your socket.io server. This contract 
 
   ```json
   {
-    "userId": "string",
+    "roomCode": "string",
     "name": "string",
-    "roomCode": "string"
+    "userId": "string"
   }
   ```
 
 - **Server Response:**  
-  Emits `room-joined` to the joining player, `player-joined` to all in the room.
+  Emits `player-joined` to all in the room (for new players) or `player-rejoined` (for returning players).
 
 ---
 
-### 3. `rejoin-room`
+### 3. `get-room-status`
+
+- **Payload:**
+
+  ```json
+  "roomCode"  // string
+  ```
+
+- **Server Response:**  
+  Emits `room-status` with room details or `room-status-error` if room not found.
+
+---
+
+### 4. `start-game`
 
 - **Payload:**
 
   ```json
   {
-    "userId": "string",
-    "roomCode": "string"
-  }
-  ```
-
-- **Server Response:**  
-  Emits `reconnect-success` (with full room/game state) to the rejoining player.
-
----
-
-### 4. `leave-room`
-
-- **Payload:**
-
-  ```json
-  {
-    "userId": "string",
-    "roomCode": "string"
-  }
-  ```
-
-- **Server Response:**  
-  Emits `player-left` to all in the room. If last player, emits `room-deleted`.
-
----
-
-### 5. `start-game` (host only)
-
-- **Payload:**
-
-  ```json
-  {
-    "userId": "string",
-    "roomCode": "string"
+    "roomCode": "string",
+    "totalRounds": number,
+    "currentCards": ["string", ...]
   }
   ```
 
 - **Server Response:**  
   Emits `game-started` to all in the room.
+
+---
+
+### 5. `next-turn`
+
+- **Payload:**
+
+  ```json
+  {
+    "roomCode": "string",
+    "currentCards": ["string", ...]
+  }
+  ```
+
+- **Server Response:**  
+  Emits `increment-turn` to all in the room or `next-turn-error` if room not found.
 
 ---
 
@@ -109,63 +111,40 @@ Here’s a **sample backend contract** for your socket.io server. This contract 
 
   ```json
   {
-    "userId": "string",
     "roomCode": "string",
-    "rankings": ["string", "string", "string", "string", "string"]
+    "rankings": ["string", "string", "string", "string", "string"],
+    "userId": "string"
   }
   ```
 
 - **Server Response:**  
-  Emits `rankings-submitted` (acknowledgement or updated state).
+  Emits `rankings-submitted` to all in the room with updated game state.
 
 ---
 
-### 7. `submit-prediction`
+### 7. `leave-room`
 
 - **Payload:**
 
   ```json
-  {
-    "userId": "string",
-    "roomCode": "string",
-    "prediction": ["string", "string", "string", "string", "string"]
-  }
+  "roomCode"  // string
   ```
 
 - **Server Response:**  
-  Emits `prediction-submitted` (acknowledgement or updated state).
+  Emits `player-left` to all remaining players in the room.
 
 ---
 
-### 8. `reset-game` (host only)
+### 8. `message`
 
 - **Payload:**
 
   ```json
-  {
-    "userId": "string",
-    "roomCode": "string"
-  }
+  // any data object
   ```
 
 - **Server Response:**  
-  Emits `game-reset` to all in the room.
-
----
-
-### 9. `delete-room` (host only)
-
-- **Payload:**
-
-  ```json
-  {
-    "userId": "string",
-    "roomCode": "string"
-  }
-  ```
-
-- **Server Response:**  
-  Emits `room-deleted` to all in the room.
+  Broadcasts `message` to all connected clients.
 
 ---
 
@@ -177,34 +156,29 @@ Here’s a **sample backend contract** for your socket.io server. This contract 
 
   ```json
   {
-    "roomCode": "string",
-    "players": [Player],
-    "hostId": "string"
+    "roomCode": "string"
   }
   ```
 
 ---
 
-### 2. `room-joined`
+### 2. `player-joined`
 
 - **Payload:**
 
   ```json
-  {
-    "roomCode": "string",
-    "players": [Player],
-    "hostId": "string"
-  }
+  [Player]  // array of all players in the room
   ```
 
 ---
 
-### 3. `player-joined`
+### 3. `player-rejoined`
 
 - **Payload:**
 
   ```json
   {
+    "player": Player,
     "players": [Player]
   }
   ```
@@ -216,128 +190,106 @@ Here’s a **sample backend contract** for your socket.io server. This contract 
 - **Payload:**
 
   ```json
+  [Player]  // array of remaining players in the room
+  ```
+
+---
+
+### 5. `room-status`
+
+- **Payload:**
+
+  ```json
   {
+    "room": GameRoom,
+    "connectedPlayers": [Player],
+    "disconnectedPlayers": [Player]
+  }
+  ```
+
+---
+
+### 6. `room-status-error`
+
+- **Payload:**
+
+  ```json
+  "string"  // error message
+  ```
+
+---
+
+### 7. `game-started`
+
+- **Payload:**
+
+  ```json
+  GameRoom  // complete game room state
+  ```
+
+---
+
+### 8. `increment-turn`
+
+- **Payload:**
+
+  ```json
+  GameRoom  // updated game room state with next turn
+  ```
+
+---
+
+### 9. `next-turn-error`
+
+- **Payload:**
+
+  ```json
+  "string"  // error message
+  ```
+
+---
+
+### 10. `rankings-submitted`
+
+- **Payload:**
+
+  ```json
+  GameRoom  // updated game room state with scores
+  ```
+
+---
+
+### 11. `submit-rankings-error`
+
+- **Payload:**
+
+  ```json
+  "string"  // error message
+  ```
+
+---
+
+### 12. `host-reassigned`
+
+- **Payload:**
+
+  ```json
+  {
+    "newHost": Player,
     "players": [Player]
   }
   ```
 
 ---
 
-### 5. `game-started`
+### 13. `host-disconnected`
 
 - **Payload:**
 
   ```json
   {
-    "roomState": RoomState
-  }
-  ```
-
----
-
-### 6. `rankings-submitted`
-
-- **Payload:**
-
-  ```json
-  {
-    "userId": "string",
-    "status": "ok" | "error",
-    "message"?: "string"
-  }
-  ```
-
----
-
-### 7. `prediction-submitted`
-
-- **Payload:**
-
-  ```json
-  {
-    "userId": "string",
-    "status": "ok" | "error",
-    "message"?: "string"
-  }
-  ```
-
----
-
-### 8. `round-reviewed`
-
-- **Payload:**
-
-  ```json
-  {
-    "targetRankings": ["string", ...],
-    "playerScores": [
-      {
-        "userId": "string",
-        "score": number,           // round score for this player
-        "diffs": [number, ...]     // per-card diffs for this round
-      }
-    ]
-  }
-  ```
-
----
-
-### 9. `score-updated`
-
-- **Payload:**
-
-  ```json
-  {
-    "players": [Player]           // with updated total scores
-  }
-  ```
-
----
-
-### 10. `game-reset`
-
-- **Payload:**
-
-  ```json
-  {
-    "roomState": RoomState
-  }
-  ```
-
----
-
-### 11. `room-deleted`
-
-- **Payload:**
-
-  ```json
-  {
-    "roomCode": "string"
-  }
-  ```
-
----
-
-### 12. `game-over`
-
-- **Payload:**
-
-  ```json
-  {
-    "players": [Player],
-    "winnerId": "string"
-  }
-  ```
-
----
-
-### 13. `reconnect-success`
-
-- **Payload:**
-
-  ```json
-  {
-    "roomState": RoomState
+    "hostName": "string",
+    "players": [Player]
   }
   ```
 
@@ -348,9 +300,17 @@ Here’s a **sample backend contract** for your socket.io server. This contract 
 - **Payload:**
 
   ```json
-  {
-    "message": "string"
-  }
+  "string"  // error message
+  ```
+
+---
+
+### 15. `message`
+
+- **Payload:**
+
+  ```json
+  // any data object (broadcast from other clients)
   ```
 
 ---
@@ -359,40 +319,66 @@ Here’s a **sample backend contract** for your socket.io server. This contract 
 
 ### **Player**
 
-```json
+```typescript
 {
-  "userId": "string",
-  "name": "string",
-  "score": number,
-  "isHost": boolean,
-  "isOnline": boolean
+  userId: string;
+  name?: string;
+  score: number;
+  rankings?: string[];
+  isHost?: boolean;
+  isConnected?: boolean;
+  roundScore?: number;
 }
 ```
 
-### **RoomState**
+### **Game**
 
-```json
+```typescript
 {
-  "roomCode": "string",
-  "players": [Player],
-  "hostId": "string",
-  "gameState": "setup" | "targetRanking" | "groupPrediction" | "review" | "gameOver",
-  "currentRound": number,
-  "totalRounds": number,
-  "targetPlayerIndex": number,
-  "currentCards": ["string", ...],
-  "targetRankings": ["string", ...],
-  "groupPredictions": ["string", ...],
-  // ...any other state needed for reconnection
+  currentRound: number;
+  totalRounds: number;
+  targetPlayerIndex: number;
+  currentCards: string[];
+  targetRankings: string[];
+}
+```
+
+### **GameRoom**
+
+```typescript
+{
+  code: string;
+  players: Player[];
+  host?: string;
+  game: Game;
 }
 ```
 
 ---
 
-## **Notes & Recommendations**
+## **Game Flow & Scoring**
 
-- All events should include `userId` and `roomCode` for authentication and routing.
-- The server should validate host actions (e.g., only host can start/reset/delete).
-- On reconnection, the server should send the full `RoomState` so the client can restore UI.
-- For scoring, the server should calculate and emit per-player round scores and diffs for the review screen.
-- The server should handle room cleanup when all players leave.
+1. **Room Creation**: Host creates room and gets a unique room code
+2. **Player Joining**: Players join using room code, first player becomes host
+3. **Game Start**: Host starts game with specified rounds and cards
+4. **Turn Progression**: Game progresses through players as target players
+5. **Rankings Submission**: Target player submits their ranking, others submit predictions
+6. **Scoring**: Players get points based on how close their predictions match the target's ranking (max 20 points per round, -1 for each position difference)
+7. **Next Turn**: Game moves to next player or next round
+
+## **Connection Management**
+
+- Players are marked as `isConnected: false` when they disconnect but remain in the game
+- Players can rejoin and will be marked as `isConnected: true`
+- Host is reassigned automatically if current host disconnects
+- Empty rooms (no connected players) are automatically cleaned up
+- Players have 2 minutes of inactivity before being disconnected
+
+---
+
+## **Notes**
+
+- All game state is stored in memory (no persistence)
+- Host privileges include starting games and managing turns
+- Scoring is calculated server-side to prevent cheating
+- Room codes are generated to be unique across all active rooms

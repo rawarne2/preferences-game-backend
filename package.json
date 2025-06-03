@@ -10,7 +10,7 @@
     "docker:build": "docker build -t preferences-game-backend .",
     "docker:dev": "docker-compose up dev",
     "docker:prod": "docker-compose up app",
-    "test": "jest --detectOpenHandles"
+    "test": "jest --detectOpenHandles --testPathIgnorePatterns=dist/"
   },
   "keywords": [],
   "author": "Rashaun Warner",
