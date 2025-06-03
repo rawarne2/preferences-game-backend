@@ -1,98 +1,96 @@
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import dotenv from 'dotenv';
+import "dotenv/config";
 import type { Socket, Server as SocketIOServerType } from "socket.io";
 import type { CorsOptions } from "cors";
 import type { Server as HttpServerType } from "http";
-const dotenv = require('dotenv');
-const http = require('http');
-const express = require('express');
-const { Server } = require('socket.io');
-const cors = require('cors');
+import { Player, GameRoom } from './definitions';
+import { createUniqueRoomCode } from './utilities';
 
 dotenv.config({ path: `.env.${process.env.NODE_ENV}` });
 
-const app = express();
-
-const origin = process.env.ORIGIN;
-console.log('origin: ', origin, process.env.PORT)
-
-// Types
-interface Player {
-    id: string;
-    name: string;
-}
-
-interface GameRoom {
-    code: string;
-    players: Player[];
-    host: string; // Socket ID of room creator
-}
-
 // State management | TODO: use redis or database
-const gameRooms = new Map<string, GameRoom>();
+export const gameRooms = new Map<string, GameRoom>();
+
+// Initialize Express app
+const origin = process.env.ORIGIN;
+const port: number = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+
+console.log('origin: ', origin, ", port: ", port, ", NODE_ENV: ", process.env.NODE_ENV);
 
 
+// Configure CORS
 const corsSettings: CorsOptions = {
     origin: origin,
-    credentials: true,
-    methods: ['GET', 'POST'],
-
+    credentials: false,
+    methods: ['GET'],
 }
-app.use(cors(corsSettings));
 
-// Health check endpoint for ALB
-app.get('/health', (_: any, res: any) => {
-    res.status(200).send('OK!!!');
-});
-
+const app = express();
+// Create HTTP server
 const httpServer: HttpServerType = http.createServer(app);
 
+// Initialize Socket.IO
 const io: SocketIOServerType = new Server(httpServer, {
     transports: ['websocket', 'polling'],
     cors: corsSettings,
-    // Allow connection upgrades behind ALB
     allowEIO3: true,
-    rememberUpgrade: true,  // Client will remember successful websocket connections
-    upgradeTimeout: 10000,  // Time to wait for upgrade to websocket
-    agent: false,
+    connectTimeout: 60000,
+    pingTimeout: 60000,
+    pingInterval: 5000,
 });
 
+// Helper function to reassign host if current host is disconnected
+const reassignHostIfNeeded = (roomCode: string, gameRoom: GameRoom) => {
+    if (!gameRoom.host) return;
 
-// Helper functions
-const generateRoomCode = (): string => {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    for (let i = 0; i < 10; i++) {
-        result += characters.charAt(Math.floor(Math.random() * characters.length));
+    const currentHost = gameRoom.players.find(p => p.userId === gameRoom.host);
+    if (!currentHost || !currentHost.isConnected) {
+        // Find first connected player to be new host
+        const newHost = gameRoom.players.find(p => p.isConnected);
+        if (newHost) {
+            // Remove host status from all players
+            gameRoom.players.forEach(p => p.isHost = false);
+            // Set new host
+            newHost.isHost = true;
+            gameRoom.host = newHost.userId;
+
+            console.log(`Host reassigned to ${newHost.name} in room ${roomCode}`);
+            io.to(roomCode).emit('host-reassigned', {
+                newHost: newHost,
+                players: gameRoom.players
+            });
+        }
     }
-    return result;
 };
-
-const createUniqueRoomCode = (): string => {
-    let code: string;
-    do {
-        code = generateRoomCode();
-    } while (gameRooms.has(code));
-    return code;
-};
-
-io.use((socket: Socket, next) => {
-    console.log('New socket connection:', socket.id);
-    next();
-});
 
 // Socket.IO event handlers
 io.on('connection', (socket: Socket) => {
+    console.log('New socket connection:', socket.id);
     // Create a new room
-    socket.on('createRoom', () => {
-        const roomCode = createUniqueRoomCode();
+    socket.on('create-room', async ({ userId }: { userId?: string } = {}) => {
+        const roomCode = createUniqueRoomCode(gameRooms);
         gameRooms.set(roomCode, {
             code: roomCode,
             players: [],
-            host: socket.id
+            game: {
+                currentCards: [],
+                totalRounds: 5,
+                targetPlayerIndex: 0,
+                currentRound: 1,
+                targetRankings: [],
+            }
         });
-
+        const room = gameRooms.get(roomCode);
         socket.join(roomCode);
-        socket.emit('roomCreated', roomCode);
-        console.log('Room created:', roomCode);
+        socket.data.gameRoom = room;
+        if (userId) {
+            socket.data.userId = userId;
+        }
+        console.log('room-created', { roomCode });
+        io.to(roomCode).emit('room-created', { roomCode });
     });
 
     socket.on('message', (data) => {
@@ -100,166 +98,287 @@ io.on('connection', (socket: Socket) => {
         io.emit('message', data);
     });
 
-    // Join an existing room
-    socket.on('joinRoom', (roomCode: string) => {
-        const room = gameRooms.get(roomCode);
-
-        if (!room) {
-            socket.emit('error', 'Room not found');
-            console.log('Room not found')
+    // Get room status
+    socket.on('get-room-status', (roomCode: string) => {
+        const gameRoom = gameRooms.get(roomCode);
+        if (!gameRoom) {
+            socket.emit('room-status-error', 'Room not found');
             return;
         }
+
+        socket.emit('room-status', {
+            room: gameRoom,
+            connectedPlayers: gameRoom.players.filter(p => p.isConnected),
+            disconnectedPlayers: gameRoom.players.filter(p => !p.isConnected)
+        });
+    });
+
+    // Join an existing room
+    socket.on('join-room', async ({ roomCode, name, userId }: { roomCode: string, name: string, userId: string }) => {
+        const gameRoom = gameRooms.get(roomCode);
+        if (!gameRoom) {
+            socket.emit('error', 'Room not found');
+            return;
+        }
+
+        // Check if player is rejoining (existed before but was disconnected)
+        const existingPlayerIndex = gameRoom.players.findIndex(p => p.userId === userId);
+
+        if (existingPlayerIndex !== -1) {
+            // Player is rejoining - update their connection status
+            const existingPlayer = gameRoom.players[existingPlayerIndex];
+            existingPlayer.isConnected = true;
+
+            socket.join(roomCode);
+            socket.data.gameRoom = gameRoom;
+            socket.data.userId = userId;
+
+            // Check if host needs to be reassigned
+            reassignHostIfNeeded(roomCode, gameRoom);
+
+            console.log('Player rejoined:', { userId, name, roomCode });
+            io.to(roomCode).emit('player-rejoined', {
+                player: existingPlayer,
+                players: gameRoom.players
+            });
+            return;
+        }
+
+        // New player joining
+        const newPlayer: Player = {
+            userId: userId,
+            name: name,
+            isHost: false,
+            score: 0,
+            isConnected: true,
+        }
+
+        if (!gameRoom.players || gameRoom.players.length === 0) {
+            newPlayer.isHost = true;
+            gameRoom.host = newPlayer.userId;
+            gameRoom.players = [newPlayer];
+        } else {
+            newPlayer.isHost = false;
+            gameRoom.players.push(newPlayer);
+        }
+        gameRooms.set(roomCode, gameRoom);
 
         socket.join(roomCode);
-        socket.emit('roomJoined', {
-            code: roomCode,
-            players: room.players
-        });
-        console.log('roomJoined')
+        socket.data.gameRoom = gameRoom;
+        socket.data.userId = userId;
+
+        const sockets = await io.in(roomCode).fetchSockets();
+        const players = sockets[0].data?.gameRoom?.players;
+        console.log('player-joined', players);
+
+        io.to(roomCode).emit('player-joined', players);
     });
 
-    // Submit player name
-    socket.on('submitName', ({ roomCode, playerName, playerId }: {
-        roomCode: string;
-        playerName: string;
-        playerId: string;
-    }) => {
-        const room = gameRooms.get(roomCode);
-
-        if (!room) {
+    socket.on('start-game', (roomCode: string, totalRounds: number, currentCards: string[]) => {
+        const gameRoom = gameRooms.get(roomCode);
+        if (!gameRoom) {
             socket.emit('error', 'Room not found');
-            console.log('Room not found')
             return;
         }
 
-        // Check for duplicate names
-        if (room.players.some(p => p.name.toLowerCase() === playerName.toLowerCase())) {
-            socket.emit('error', 'Name already taken');
-            console.log('Name already taken')
+        gameRoom.game = {
+            ...gameRoom.game,
+            currentCards,
+            totalRounds,
+        }
+        socket.data.gameRoom = gameRoom;
+
+        io.to(roomCode).emit('game-started', gameRoom);
+        console.log('Game started in room:', roomCode, gameRoom);
+    });
+
+    socket.on('next-turn', (roomCode: string, currentCards: string[]) => {
+        console.log('next-turn', roomCode, currentCards);
+        const gameRoom = gameRooms.get(roomCode);
+        if (!gameRoom) {
+            socket.emit('next-turn-error', 'Game room not found');
             return;
         }
 
-        // Add player to room
-        const newPlayer: Player = {
-            id: playerId,
-            name: playerName
+        gameRoom.game.currentCards = currentCards;
+        gameRoom.game.targetRankings = [];
+        gameRoom.players.forEach((player: Player) => {
+            player.rankings = [];
+        });
+        if (gameRoom.game.targetPlayerIndex + 1 === gameRoom.players.length) { // go to next round
+            gameRoom.game.currentRound += 1;
+            gameRoom.game.targetPlayerIndex = 0;
+        } else { // go to next player in the round
+            console.log('going to next player in the round', gameRoom.game.targetPlayerIndex);
+            gameRoom.game.targetPlayerIndex += 1;
+        }
+
+        // if (gameRoom.game.currentRound > gameRoom.game.totalRounds) {
+        //     gameRoom.game.isGameOver = true;
+        // }
+
+        io.to(roomCode).emit('increment-turn', gameRoom);
+        console.log('increment-turn: ', roomCode, gameRoom);
+    });
+    // submitRanking
+    socket.on('submit-rankings', ({ roomCode, rankings, userId }) => {
+        // const gameRoom: GameRoom = socket.data.gameRoom;
+        const gameRoom = gameRooms.get(roomCode);
+
+        console.log('submit-rankings', { roomCode, rankings, userId, gameRoom });
+        if (!gameRoom) {
+            socket.emit('submit-rankings-error', 'Game room not found');
+            console.error('Game room not found');
+            return;
+        }
+
+        const playerIndex = gameRoom.players?.findIndex((p: Player) => p.userId === userId);
+        if (playerIndex === -1 || playerIndex === undefined) {
+            console.error('Player not in room', playerIndex);
+            socket.emit('error', 'Player not in room');
+            return;
+        }
+
+        if (!Array.isArray(rankings) || rankings.length === 0) {
+            console.error('Invalid ranking format', rankings);
+            socket.emit('error', 'Invalid ranking format');
+            return;
+        }
+
+        const isTargetPlayer = gameRoom.game?.targetPlayerIndex === playerIndex;
+        console.log('playerIndex', playerIndex, isTargetPlayer, gameRoom.players[playerIndex].name);
+
+        // Helper function to calculate score between target rankings and player rankings
+        const calculateScore = (targetRankings: string[], playerRankings: string[]): number => {
+            if (!targetRankings || !playerRankings || targetRankings.length !== 5 || playerRankings.length !== 5) {
+                return 0;
+            }
+            let score = 20;
+            for (let i = 0; i < 5; i++) {
+                const targetItem = targetRankings[i];
+                const playerPosition = playerRankings.indexOf(targetItem);
+                if (playerPosition !== -1) {
+                    const diff = Math.abs(i - playerPosition);
+                    score -= diff;
+                }
+            }
+            return score;
         };
 
-        room.players.push(newPlayer);
-        gameRooms.set(roomCode, room);
+        // Update rankings for the submitting player
+        if (isTargetPlayer) {
+            gameRoom.game.targetRankings = rankings;
+        } else {
+            gameRoom.players[playerIndex].rankings = rankings;
+        }
 
-        // Notify all players in the room
-        io.to(roomCode).emit('playerJoined', room.players);
+        // Calculate and update scores for all players who have submitted rankings
+        if (gameRoom.game.targetRankings && gameRoom.game.targetRankings.length === 5) {
+            gameRoom.players.forEach((player: Player, index: number) => {
+                // Skip the target player - they don't get scored against themselves
+                if (index === gameRoom.game.targetPlayerIndex) {
+                    return;
+                }
+
+                // Calculate score if this player has submitted rankings
+                if (player.rankings && player.rankings.length === 5) {
+                    const score = calculateScore(gameRoom.game.targetRankings, player.rankings);
+                    player.roundScore = score;
+                    player.score += score;
+                }
+            });
+        }
+
+        console.log('rankings-submitted', gameRoom);
+        io.to(roomCode).emit('rankings-submitted', gameRoom);
     });
 
-    // submitRanking
-    socket.on('submitRanking', ({ roomCode, ranking, playerId }: {
-        roomCode: string;
-        ranking: string[];
-        playerId: string;
-    }) => {
-        const room = gameRooms.get(roomCode);
-
-        if (!room) {
-            socket.emit('error', 'Room not found');
-            console.log('Room not found')
-            return;
-        }
-
-        io.to(roomCode).emit('submittedRanking', {
-            ranking: ranking,
-            playerId: playerId,
-        })
-    })
-
     // Leave room
-    socket.on('leaveRoom', (roomCode: string) => {
-        const room = gameRooms.get(roomCode);
-        console.log('leavingRoom', roomCode)
-
-        if (room) {
-            // Remove player from room
-            room.players = room.players.filter(p => p.id !== socket.id);
-
-            if (room.players.length === 0) {
-                // Delete room if empty
-                gameRooms.delete(roomCode);
-            } else {
-                // Update room state
-                gameRooms.set(roomCode, room);
-                // Notify remaining players
-                io.to(roomCode).emit('playerLeft', room.players);
-                console.log('playerLeft', room.players)
-            }
-        }
-        console.log('left room: ', roomCode)
-
+    socket.on('leave-room', (roomCode: string) => {
+        console.log('leave-room', roomCode);
+        io.to(roomCode).emit('player-left');
         socket.leave(roomCode);
     });
 
     // Handle disconnection
     socket.on('disconnect', () => {
-        console.log(`Client disconnected: ${socket.id}`);
+        console.log(`Client disconnecting: ${socket.id}`);
+        const userId = socket.data.userId;
 
-        // Find and clean up any rooms this socket was in
+        if (!userId) {
+            socket.disconnect(true);
+            return;
+        }
+
+        // Find and update player status in rooms
         gameRooms.forEach((room, code) => {
-            if (room.players.some(p => p.id === socket.id)) {
-                room.players = room.players.filter(p => p.id !== socket.id);
+            const playerIndex = room.players.findIndex(p => p.userId === userId);
 
-                if (room.players.length === 0) {
+            if (playerIndex !== -1) {
+                // Mark player as disconnected instead of removing them
+                room.players[playerIndex].isConnected = false;
+
+                console.log(`Player ${room.players[playerIndex].name} disconnected from room ${code}`);
+
+                // Check if all players are disconnected
+                const connectedPlayers = room.players.filter(p => p.isConnected);
+
+                if (connectedPlayers.length === 0) {
+                    // Delete room immediately when all players are disconnected
+                    console.log(`Deleting empty room immediately: ${code}`);
                     gameRooms.delete(code);
                 } else {
+                    // Notify other connected players about the disconnection
+                    io.to(code).emit('player-disconnected', {
+                        disconnectedPlayer: room.players[playerIndex],
+                        players: room.players
+                    });
+
+                    // If host disconnects, notify players but don't change host yet
+                    if (room.host === userId) {
+                        console.log('Host has disconnected');
+                        io.to(code).emit('host-disconnected', {
+                            hostName: room.players[playerIndex].name,
+                            players: room.players
+                        });
+                    }
+
                     gameRooms.set(code, room);
-                    console.log('playerLeft: ', room.players)
-                    io.to(code).emit('playerLeft', room.players);
                 }
             }
-
-            // If host disconnects, notify players
-            if (room.host === socket.id) {
-                console.log('Host has disconnected');
-                io.to(code).emit('error', 'Host has disconnected');
-            }
         });
+
+        socket.disconnect(true);
     });
 });
 
+
+io.on('error', (err) => {
+    console.error('Socket.IO error!!!: ', err);
+});
+
+// Handle server events
 io.on('connect_error', (err) => {
     console.error('Socket.IO error: ', err);
     io.emit('Socket.IO connect_error: ', err);
-})
+});
 
-// Start server
-const PORT: number = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+httpServer.listen(port);
 
-httpServer.listen(PORT, async () => {
-    console.log(`Server running on port ${PORT}`);
-})
+// close server
+process.on('SIGINT', () => {
+    console.log('SIGINT signal received');
+    httpServer.close(() => {
+        console.log('Server closed');
+    });
+});
 
-httpServer.on('clientError', (err, socket) => {
-    socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
-    console.error('Client error:', err);
-})
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received');
+    httpServer.close(() => {
+        console.log('Server closed');
+    });
+});
 
-httpServer.on('tlsClientError', (err, socket) => {
-    socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
-    console.error('TLS client error:', err.message, err.cause);
-})
-
-httpServer.on('connect', (socket) => {
-    console.log('Client connected', socket.headers);
-})
-
-httpServer.on('connection', (socket) => {
-    console.log('Client connection');
-})
-
-httpServer.on('request', (req, res) => {
-    console.log('Client request', req.url, res.statusCode);
-})
-
-httpServer.on('error', (err) => {
-    console.error('Server error:', err);
-})
-
-module.exports = httpServer
+io.disconnectSockets();
+export default httpServer;
