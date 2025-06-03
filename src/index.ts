@@ -6,8 +6,8 @@ import "dotenv/config";
 import type { Socket, Server as SocketIOServerType } from "socket.io";
 import type { CorsOptions } from "cors";
 import type { Server as HttpServerType } from "http";
-import { Player, GameRoom } from './definitions';
-import { createUniqueRoomCode } from './utilities';
+import { Player, GameRoom } from './definitions.js';
+import { createUniqueRoomCode } from './utilities.js';
 
 dotenv.config({ path: `.env.${process.env.NODE_ENV}` });
 
