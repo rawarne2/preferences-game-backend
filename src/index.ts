@@ -42,6 +42,9 @@ const io: SocketIOServerType = new Server(httpServer, {
     connectTimeout: 120000, // 2 minutes
     pingTimeout: 120000, // 2 minutes
     pingInterval: 15000, // 15 seconds
+    connectionStateRecovery: {
+        maxDisconnectionDuration: 600000, // 10 minutes
+    }
 });
 
 // Helper function to reassign host if current host is disconnected
@@ -231,9 +234,9 @@ io.on('connection', (socket: Socket) => {
             gameRoom.game.targetPlayerIndex += 1;
         }
 
-        // if (gameRoom.game.currentRound > gameRoom.game.totalRounds) {
-        //     gameRoom.game.isGameOver = true;
-        // }
+        if (gameRoom.game.currentRound > gameRoom.game.totalRounds) {
+            gameRoom.game.isGameOver = true;
+        }
 
         io.to(roomCode).emit('increment-turn', gameRoom);
         console.log('increment-turn: ', roomCode, gameRoom);
@@ -345,41 +348,44 @@ io.on('connection', (socket: Socket) => {
     socket.on('disconnect', () => {
         console.log(`Client disconnecting: ${socket.id}`);
         const userId = socket.data.userId;
+        const gameRoom = socket.data.gameRoom;
 
-        if (!userId) {
+        if (!userId || !gameRoom) {
             return;
         }
 
-        // Find and update player status in rooms
-        gameRooms.forEach((room, code) => {
-            const playerIndex = room.players.findIndex(p => p.userId === userId);
+        const roomCode = gameRoom.code;
+        const room = gameRooms.get(roomCode);
 
-            if (playerIndex !== -1) {
-                // Mark player as disconnected instead of removing them
-                room.players[playerIndex].isConnected = false;
+        if (!room) {
+            return;
+        }
 
-                console.log(`Player ${room.players[playerIndex].name} disconnected from room ${code}`);
+        const playerIndex = room.players.findIndex(p => p.userId === userId);
+        if (playerIndex !== -1) {
+            // Mark player as disconnected instead of removing them
+            room.players[playerIndex].isConnected = false;
+            console.log(`Player ${room.players[playerIndex].name} disconnected from room ${roomCode}`);
 
-                // Check if room should be cleaned up
-                if (cleanupEmptyRoom(code)) {
-                    return; // Room was deleted, no need to continue
-                }
+            // Check if room should be cleaned up
+            // if (cleanupEmptyRoom(roomCode)) {
+            //     io.to(roomCode).emit('message', `Game room deleted - no players are connected! ${roomCode}`);
+            //     return; // Room was deleted, no need to continue
+            // }
 
-                // Emit player left event for remaining connected players
-                io.to(code).emit('player-left', room.players);
+            // Emit player left event for remaining connected players
+            io.to(roomCode).emit('player-disconnected', room.players); // todo: add handler on fe for this
 
-                // If host disconnects, notify players but don't change host yet
-                if (room.host === userId) {
-                    console.log('Host has disconnected');
-                    io.to(code).emit('host-disconnected', {
-                        hostName: room.players[playerIndex].name,
-                        players: room.players
-                    });
-                }
-
-                gameRooms.set(code, room);
+            // If host disconnects, notify players but don't change host yet
+            if (room.host === userId) {
+                console.log('Host has disconnected');
+                io.to(roomCode).emit('host-disconnected', {
+                    hostName: room.players[playerIndex].name,
+                    players: room.players
+                });
             }
-        });
+            gameRooms.set(roomCode, room);
+        }
     });
 });
 

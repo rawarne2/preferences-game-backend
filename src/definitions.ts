@@ -14,7 +14,7 @@ export interface Game {
     targetPlayerIndex: number;
     currentCards: string[];
     targetRankings: string[];
-    // isGameOver: boolean;
+    isGameOver?: boolean;
 }
 
 export interface GameRoom {
