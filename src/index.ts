@@ -3,6 +3,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import dotenv from 'dotenv';
 import "dotenv/config";
+import fetch from 'node-fetch';
 import type { Socket, Server as SocketIOServerType } from "socket.io";
 import type { CorsOptions } from "cors";
 import type { Server as HttpServerType } from "http";
@@ -22,7 +23,6 @@ const port: number = PORT ? parseInt(PORT) : 3000;
 
 console.log('origin: ', origin, ", port: ", port, ", NODE_ENV: ", NODE_ENV);
 
-
 // Configure CORS
 const corsSettings: CorsOptions = {
     origin: origin,
@@ -31,6 +31,66 @@ const corsSettings: CorsOptions = {
 }
 
 const app = express();
+
+// Basic middleware
+app.use(express.json());
+
+// Root endpoint
+app.get('/', (req, res) => {
+    res.status(200).json({
+        message: 'Preferences Game Backend API',
+        status: 'running',
+        timestamp: new Date().toISOString(),
+        endpoints: {
+            health: '/health',
+            websocket: 'Socket.IO connection available'
+        }
+    });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        activeRooms: gameRooms.size,
+        memoryUsage: process.memoryUsage()
+    });
+});
+
+// Keep-alive function to prevent service from sleeping
+const keepAlive = () => {
+    if (NODE_ENV === 'production') {
+        // Use Render's external URL
+        const url = process.env.RENDER_EXTERNAL_URL;
+
+        if (!url) {
+            console.log('RENDER_EXTERNAL_URL not found, keep-alive disabled. Make sure you are deploying to Render.');
+            return;
+        }
+
+        const healthUrl = `${url}/health`;
+        console.log(`[${new Date().toISOString()}] Keep-alive initialized, will ping: ${healthUrl}`);
+
+        setInterval(async () => {
+            try {
+                const response = await fetch(healthUrl);
+                if (response.ok) {
+                    console.log(`[${new Date().toISOString()}] Keep-alive ping successful`);
+                } else {
+                    console.log(`[${new Date().toISOString()}] Keep-alive ping failed with status: ${response.status}`);
+                }
+            } catch (error) {
+                console.log(`[${new Date().toISOString()}] Keep-alive ping error:`, error);
+            }
+        }, 10 * 60 * 1000); // Ping every 10 minutes
+    }
+};
+
+// Start keep-alive after server starts
+setTimeout(keepAlive, 30000); // Start after 30 seconds
+
 // Create HTTP server
 const httpServer: HttpServerType = http.createServer(app);
 

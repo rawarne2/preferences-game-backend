@@ -1,20 +1,60 @@
-# preferences-game-backend
+# Preferences Game Backend
 
-Backend service for Preferences game that uses TypeScript, Express, and Socket.io.
+Backed service for Preferences game that uses TypeScript, Express, and Socket.io.
 
-Users are disconnected after 2 minutes of inactivity.
+## Keep-Alive Functionality
 
-## Tech Stack
+This service includes built-in keep-alive functionality to prevent it from sleeping on Render.
 
-- TypeScript
-- Express
-- Socket.io
-- Docker
+### How it works
 
-## Running the server
+1. **Health Check Endpoint**: Available at `/health` - returns server status and metrics
+2. **Auto Keep-Alive**: In production, the service automatically pings itself every 10 minutes
+3. **Render Integration**: Automatically uses Render's `RENDER_EXTERNAL_URL` environment variable
+
+### Render Deployment
+
+The service automatically detects when deployed to Render by using the `RENDER_EXTERNAL_URL` environment variable that Render provides automatically. No additional configuration is needed.
+
+### Manual Keep-Alive Options
+
+If you need additional monitoring or want to use external services:
+
+1. **External Service**: Use services like UptimeRobot, Pingdom, or cron-job.org to ping your `/health` endpoint every 10-15 minutes
+
+2. **Cron Job**: Set up a cron job to ping your service:
 
 ```bash
+# Add to crontab (runs every 10 minutes)
+*/10 * * * * curl -s https://preferences-game-backend.onrender.com/health > /dev/null
+```
+
+### Monitoring
+
+The service logs keep-alive pings to help with debugging:
+
+```
+[2023-12-07T10:00:00.000Z] Keep-alive ping successful
+```
+
+## API Endpoints
+
+- `GET /` - Basic API information
+- `GET /health` - Health check and server metrics
+- WebSocket connection for real-time game functionality
+
+## Development
+
+```bash
+npm install
 npm run dev
+```
+
+## Production
+
+```bash
+npm run build
+npm start
 ```
 
 --------------------------------
