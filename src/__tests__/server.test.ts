@@ -61,6 +61,7 @@ describe('Server Tests', () => {
                         targetPlayerIndex: 0,
                         currentCards: [],
                         targetRankings: [],
+                        groupPredictions: [],
                     }
                 });
             });
@@ -93,6 +94,7 @@ describe('Server Tests', () => {
                         targetPlayerIndex: 0,
                         currentCards: [],
                         targetRankings: [],
+                        groupPredictions: [],
                     }
                 });
             }
@@ -123,6 +125,7 @@ describe('Server Tests', () => {
                         targetPlayerIndex: 0,
                         currentCards: [],
                         targetRankings: [],
+                        groupPredictions: [],
                     }
                 });
 
