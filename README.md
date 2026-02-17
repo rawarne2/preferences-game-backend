@@ -57,6 +57,30 @@ npm run build
 npm start
 ```
 
+## Running with Docker Compose
+
+Docker is **optional**. Use it if you prefer running the app in a container (e.g. to match another service or avoid installing Node locally). Otherwise, use the Development or Production commands above.
+
+**Start the app (builds and runs in foreground):**
+
+```bash
+docker compose up --build
+```
+
+**Start in the background:**
+
+```bash
+docker compose up --build -d
+```
+
+**Stop:**
+
+```bash
+docker compose down
+```
+
+The Compose setup uses `Dockerfile.dev`, runs `npm run dev`, and exposes port 3000 with `NODE_ENV=development` and `ORIGIN=http://localhost:5173`.
+
 --------------------------------
 
 # **Socket.IO Backend Contract**
@@ -391,6 +415,7 @@ This contract defines the **event names**, **payloads**, and **expected response
   players: Player[];
   host?: string;
   game: Game;
+  cleanupTimer?: ReturnType<typeof setTimeout>;  // Tracks 10-minute grace period before room deletion
 }
 ```
 
@@ -411,7 +436,8 @@ This contract defines the **event names**, **payloads**, and **expected response
 - Players are marked as `isConnected: false` when they disconnect but remain in the game
 - Players can rejoin and will be marked as `isConnected: true`
 - Host is reassigned automatically if current host disconnects
-- Empty rooms (no connected players) are automatically cleaned up
+- When all players leave or disconnect, the room remains available for **10 minutes** before being deleted, giving players a chance to rejoin
+- If any player rejoins within the 10-minute grace period, the cleanup timer is cancelled
 - Players have 2 minutes of inactivity before being disconnected
 
 ---

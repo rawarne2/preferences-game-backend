@@ -12,7 +12,8 @@ The rejoin functionality allows players to rejoin a game room after an unexpecte
 
 - Players are marked as `isConnected: false` instead of being removed when disconnected
 - All player data (score, rankings, host status) is preserved during disconnection
-- Rooms are deleted immediately when all players are disconnected (no grace period)
+- When all players leave or disconnect, the room remains available for **10 minutes** before being deleted
+- If any player rejoins within the 10-minute grace period, the cleanup timer is canceled and the room stays active
 
 ### 2. Connection Management
 
@@ -32,11 +33,13 @@ The rejoin functionality allows players to rejoin a game room after an unexpecte
 - When any player rejoins, the system checks if host reassignment is needed
 - The first connected player becomes the new host if the original host remains disconnected
 
-### 5. Resource Efficiency
+### 5. Room Cleanup Grace Period
 
-- Empty rooms (no connected players) are deleted immediately
-- No memory waste on abandoned rooms
-- Optimal for server resource management
+- When all players leave or disconnect, a **10-minute grace period** begins
+- If any player rejoins within the grace period, the timer is cancelled and the room is preserved
+- After 10 minutes with no reconnections, the room is permanently deleted
+- Only one cleanup timer runs per room at a time (duplicate timers are prevented)
+- Ensures players have time to rejoin after brief network issues or accidental disconnections
 
 ## New Socket Events
 
@@ -140,17 +143,30 @@ interface Player {
   score: number;
   rankings?: string[];
   isHost?: boolean;
-  isConnected?: boolean;  // New field
+  isConnected?: boolean;
   roundScore?: number;
+}
+```
+
+### GameRoom Interface Updates
+
+```typescript
+interface GameRoom {
+  code: string;
+  players: Player[];
+  host?: string;
+  game: Game;
+  cleanupTimer?: ReturnType<typeof setTimeout>;  // Tracks the 10-minute grace period timer
 }
 ```
 
 ### Room Cleanup Logic
 
-- Rooms with no connected players are deleted immediately upon last player disconnect
-- No grace period or timeout delays
-- Efficient memory management with instant cleanup
-- Rooms are only preserved while at least one player remains connected
+- When the last connected player leaves or disconnects, a 10-minute cleanup timer is started
+- If a player rejoins during the grace period, the timer is cancelled (`cancelRoomCleanup`)
+- After the grace period expires, the room is deleted only if no players have reconnected
+- Duplicate timers are prevented — if a timer is already running, a new one won't be started
+- The `cleanupTimer` field on `GameRoom` tracks the pending timeout
 
 ### Host Reassignment Logic
 
@@ -203,17 +219,18 @@ socket.on('host-reassigned', ({ newHost }) => {
 
 The system handles various edge cases:
 
-- Room not found during rejoin attempt
+- Room not found during rejoin attempt (room may have been deleted after the 10-minute grace period)
 - Multiple players with same userId (shouldn't happen with good client-side UUID generation)
 - Host disconnection and reassignment
-- All players disconnecting (room cleanup)
+- All players disconnecting (10-minute grace period before room cleanup)
+- Player rejoining during the grace period (cleanup timer is cancelled)
 
 ## Benefits
 
 1. **Improved User Experience**: Players don't lose progress due to network issues
 2. **Game Continuity**: Games can continue even with temporary disconnections  
 3. **Robust Host Management**: Always ensures there's a connected host
-4. **Automatic Cleanup**: Prevents memory leaks from abandoned rooms
+4. **Graceful Cleanup**: 10-minute grace period prevents premature room deletion while still cleaning up abandoned rooms
 5. **Transparent Reconnection**: Seamless experience for players rejoining
 
 ## Testing
@@ -225,3 +242,5 @@ To test the rejoin functionality:
 3. Reconnect and try to join the same room with the same userId
 4. Verify that player data (score, rankings) is preserved
 5. Test host reassignment by having the host disconnect and another player rejoin
+6. Test grace period: have all players leave, then rejoin within 10 minutes — room should still exist
+7. Test cleanup: have all players leave and wait more than 10 minutes — room should be deleted

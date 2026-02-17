@@ -14,6 +14,7 @@ export interface Game {
     targetPlayerIndex: number;
     currentCards: string[];
     targetRankings: string[];
+    groupPredictions: string[];
     isGameOver?: boolean;
 }
 
@@ -22,6 +23,7 @@ export interface GameRoom {
     players: Player[];
     host?: string;
     game: Game;
+    cleanupTimer?: ReturnType<typeof setTimeout>;
 }
 
 export type Category = 'general' | 'adult' | 'dating' | 'pop-culture';
