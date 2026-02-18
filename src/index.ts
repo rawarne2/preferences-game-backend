@@ -428,7 +428,12 @@ io.on('connection', (socket: Socket) => {
     });
 
     // Leave room — payload: (roomCode) or { roomCode, userId }
-    socket.on('leave-room', (payload: string | { roomCode: string; userId?: string }) => {
+    socket.on('leave-room', (payload: { roomCode: string; userId?: string }) => {
+        console.log('leave-room', payload);
+        if (!payload.roomCode) {
+            console.error('No room code provided');
+            return;
+        }
         const roomCode = typeof payload === 'string' ? payload : payload.roomCode;
         const payloadUserId = typeof payload === 'object' && payload.userId != null ? payload.userId : undefined;
         const gameRoom = gameRooms.get(roomCode);
@@ -446,7 +451,8 @@ io.on('connection', (socket: Socket) => {
 
         const playerIndex = gameRoom.players.findIndex(p => p.userId === leaverUserId);
         if (playerIndex === -1) {
-            socket.emit('error', 'Player not in room');
+            // socket.emit('error', 'Player not in room'); // don't emit error to the player, just log it
+            console.warn('Player not in room', leaverUserId);
             return;
         }
 
